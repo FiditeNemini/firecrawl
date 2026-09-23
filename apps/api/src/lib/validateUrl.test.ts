@@ -1,4 +1,4 @@
-import { isSameDomain, removeDuplicateUrls } from "./validateUrl";
+import { checkUrl, isSameDomain, removeDuplicateUrls } from "./validateUrl";
 import { isSameSubdomain } from "./validateUrl";
 
 describe("isSameDomain", () => {
@@ -168,4 +168,28 @@ describe("removeDuplicateUrls", () => {
     const result = removeDuplicateUrls(urls);
     expect(result).toEqual(["https://example.com"]);
   });
+});
+
+describe("checkUrl internal address blocking", () => {
+  it.each([
+    "http://169.254.169.254/latest/meta-data/",
+    "http://127.0.0.1:8080/",
+    "http://10.0.0.5/",
+    "http://192.168.1.10/",
+    "http://172.16.0.1/",
+    "http://100.64.0.1/",
+    "http://[::1]/",
+    "http://[::ffff:169.254.169.254]/",
+    "http://2852039166/",
+    "http://0xa9fea9fe/",
+  ])("rejects %s", url => {
+    expect(() => checkUrl(url)).toThrow();
+  });
+
+  it.each(["https://example.com/", "http://93.184.216.34/"])(
+    "allows %s",
+    url => {
+      expect(checkUrl(url)).toBe(url);
+    },
+  );
 });

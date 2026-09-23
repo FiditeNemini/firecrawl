@@ -1,5 +1,9 @@
 import * as undici from "undici";
-import { getSecureDispatcher } from "../scraper/scrapeURL/engines/utils/safeFetch";
+import {
+  getSecureDispatcher,
+  isIPPrivate,
+} from "../scraper/scrapeURL/engines/utils/safeFetch";
+import { config } from "../config";
 
 export const protocolIncluded = (url: string) => {
   // if :// not in the start of the url assume http (maybe https?)
@@ -52,6 +56,19 @@ export const checkUrl = (url: string) => {
 
   if ((url.split(".")[0].match(/:/g) || []).length !== 1) {
     throw new Error("Invalid URL. Invalid protocol."); // for this one: http://http://example.com
+  }
+
+  // Security: IP-literal hosts must be public unicast. Rejects private,
+  // loopback, link-local (incl. 169.254.169.254 cloud metadata), CGNAT and
+  // IPv4-mapped IPv6 forms before any connection is attempted. The URL parser
+  // has already normalized decimal/hex IPv4 notations. Hostnames that resolve
+  // to internal addresses are still blocked at connect time by safeFetch and
+  // the playwright SSRF proxy.
+  const host = typedUrlObj.hostname.replace(/^\[|\]$/g, "");
+  if (config.ALLOW_LOCAL_WEBHOOKS !== true && isIPPrivate(host)) {
+    throw new Error(
+      "Invalid URL. Private, loopback and link-local addresses are not allowed.",
+    );
   }
 
   return url;
