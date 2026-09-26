@@ -70,49 +70,55 @@ RUN test -s dist/src/harness.js && \
 # Remove dev dependencies
 RUN pnpm prune --prod --ignore-scripts
 
-# Runtime stage
-FROM base AS runtime
-
-# Install runtime dependencies (curl only to fetch FoundationDB below; purged after).
-RUN apt-get update && apt-get upgrade -y && apt-get install -y \
-    procps \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# FoundationDB client library (libfdb_c + fdbcli)
+# FoundationDB client library, extracted in a build-only stage. Its dpkg
+# records travel with the files so image inventories (SBOMs, scanners) stay accurate.
+FROM base AS fdb
 ARG FDB_VERSION=7.3.63
-RUN ARCH=$(dpkg --print-architecture) && \
+RUN apt-get update && apt-get install -y curl && \
+    ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in arm64) FDB_ARCH=aarch64 ;; *) FDB_ARCH=$ARCH ;; esac && \
     curl -fsSL -o /tmp/fdb-clients.deb \
       "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_${FDB_ARCH}.deb" && \
-    dpkg -i /tmp/fdb-clients.deb && rm /tmp/fdb-clients.deb && \
-    apt-get purge -y --auto-remove curl && rm -rf /var/lib/apt/lists/*
+    dpkg -i /tmp/fdb-clients.deb && \
+    mkdir -p /out/lib /out/status.d && \
+    cp /usr/lib/libfdb_c.so /out/lib/ && \
+    cp -P /usr/lib/*-linux-gnu/liblzma.so.5* /out/lib/ && \
+    dpkg-query -s foundationdb-clients > /out/status.d/foundationdb-clients && \
+    dpkg-query -s liblzma5 > /out/status.d/liblzma5 && \
+    printf '%s\n' 'PRETTY_NAME="Debian GNU/Linux 13 (trixie) (distroless)"' 'NAME="Debian GNU/Linux"' 'ID=debian' 'VERSION_ID="13"' 'VERSION="13 (trixie)"' 'VERSION_CODENAME=trixie' 'HOME_URL="https://github.com/GoogleContainerTools/distroless"' > /out/os-release
 
-# The runtime runs `node` directly: package managers (and their bundled,
-# often-vulnerable dependencies) are build tools only.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-* /pnpm /root/.cache /home/node/.cache
-
-RUN groupadd --system --gid 1001 firecrawl && \
-    useradd --system --uid 1001 --gid firecrawl --create-home --shell /usr/sbin/nologin firecrawl
+# Runtime stage: distroless Node (no shell, package manager or userland tools).
+# Minions runs `node dist/src/index.js`; the harness entrypoint needs Docker and
+# is not supported in this image.
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
 
 EXPOSE 8080
 WORKDIR /app
 ARG GIT_SHA=unknown
 ENV FIRECRAWL_BUILD_SHA=$GIT_SHA
 
+COPY --from=fdb /out/lib/ /usr/lib/
+COPY --from=fdb /out/status.d/ /var/lib/dpkg/status.d/
+# Distroless's os-release omits VERSION_CODENAME and names itself "Distroless", which
+# stops scanners from matching Debian advisories (a false "0 CVEs"). This is the
+# accurate identification of the trixie packages the image contains.
+COPY --from=fdb /out/os-release /etc/os-release
+COPY --from=fdb /out/os-release /usr/lib/os-release
+
 # Copy built application
-COPY --from=build --chown=firecrawl:firecrawl /app/node_modules ./node_modules
-COPY --from=build --chown=firecrawl:firecrawl /app/dist ./dist
-COPY --from=build --chown=firecrawl:firecrawl /app/native ./native
-COPY --from=build --chown=firecrawl:firecrawl /app/BUILD_SHA ./BUILD_SHA
-COPY --from=build --chown=firecrawl:firecrawl /app/openapi.json ./openapi.json
-COPY --from=build --chown=firecrawl:firecrawl /app/openapi-v0.json ./openapi-v0.json
+COPY --from=build --chown=65532:65532 /app/node_modules ./node_modules
+COPY --from=build --chown=65532:65532 /app/dist ./dist
+COPY --from=build --chown=65532:65532 /app/native ./native
+COPY --from=build --chown=65532:65532 /app/BUILD_SHA ./BUILD_SHA
+COPY --from=build --chown=65532:65532 /app/openapi.json ./openapi.json
+COPY --from=build --chown=65532:65532 /app/openapi-v0.json ./openapi-v0.json
 
 # Copy Go shared library
-COPY --from=go-build --chown=firecrawl:firecrawl /app/sharedLibs/go-html-to-md/libhtml-to-markdown.so ./sharedLibs/go-html-to-md/
+COPY --from=go-build --chown=65532:65532 /app/sharedLibs/go-html-to-md/libhtml-to-markdown.so ./sharedLibs/go-html-to-md/
 
-RUN node -e 'const fs = require("fs"); for (const p of ["dist/src/harness.js", "dist/src/controllers/v0/crawl-status.js", "BUILD_SHA"]) { if (!fs.statSync(p).size) throw new Error(`${p} missing or empty`); }'
+RUN ["/nodejs/bin/node", "-e", "const fs = require('fs'); for (const p of ['dist/src/index.js', 'dist/src/controllers/v0/crawl-status.js', 'BUILD_SHA']) { if (!fs.statSync(p).size) throw new Error(p + ' missing or empty'); }"]
 
-USER firecrawl
+USER 65532:65532
 
-CMD ["node", "dist/src/harness.js", "--start-docker"]
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD ["dist/src/index.js"]
