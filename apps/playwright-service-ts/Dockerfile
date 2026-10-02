@@ -22,13 +22,16 @@ RUN pnpm run build
 RUN pnpm prune --prod --ignore-scripts
 
 # Collect Chromium's runtime: the headless shell's shared-library closure plus
-# libraries it dlopens (NSS) and font data, copied as whole Debian packages with
+# libraries it dlopens (NSS) and their own dependencies (e.g. libsoftokn3 needs
+# libsqlite3; without it the browser aborts on the first TLS handshake), and
+# font data, copied as whole Debian packages with
 # their dpkg records so the final image inventory stays accurate. Packages the
 # distroless base already provides are skipped.
 FROM build AS collect
 RUN set -eu; \
   HS=$(ls -d "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-linux/headless_shell); \
-  closure=$(ldd "$HS" | awk '/=>/{print $3}' | xargs -r readlink -f | xargs -r dpkg -S 2>/dev/null | cut -d: -f1); \
+  nsslibs=$(dpkg -L libnss3 | grep '\.so'); \
+  closure=$(ldd "$HS" $nsslibs | awk '/=>/{print $3}' | xargs -r readlink -f | xargs -r dpkg -S 2>/dev/null | cut -d: -f1); \
   fonts=$(dpkg-query -W -f '${Package}\n' | grep -E '^fonts-'); \
   skip=" libc6 libgcc-s1 libstdc++6 zlib1g libzstd1 libssl3t64 gcc-14-base libgomp1 base-files ca-certificates tzdata tzdata-legacy netbase media-types "; \
   mkdir -p /out/root /out/status.d; \
