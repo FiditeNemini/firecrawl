@@ -43,6 +43,7 @@ import { initializeEngineForcing } from "./scraper/WebScraper/utils/engine-forci
 import responseTime from "response-time";
 import { shutdownWebhookQueue } from "./services/webhook";
 import { shutdownIndexerQueue } from "./services/indexing/indexer-queue";
+import { getOpenApiSpecForRequest } from "./lib/openapi";
 
 const { createBullBoard } = require("@bull-board/api");
 const { BullMQAdapter } = require("@bull-board/api/bullMQAdapter");
@@ -124,12 +125,12 @@ app.get("/", (_, res) => {
   });
 });
 
-app.get("/openapi.json", (_, res) => {
-  res.sendFile("openapi.json", { root: "." });
+app.get("/openapi.json", (req, res) => {
+  res.json(getOpenApiSpecForRequest("openapi.json", "/v1", req));
 });
 
-app.get("/openapi-v0.json", (_, res) => {
-  res.sendFile("openapi-v0.json", { root: "." });
+app.get("/openapi-v0.json", (req, res) => {
+  res.json(getOpenApiSpecForRequest("openapi-v0.json", "/v0", req));
 });
 
 app.use(
