@@ -1,11 +1,22 @@
 name: firecrawl
 
 x-common-service: &common-service
-  # NOTE: If you don't want to build the service locally,
-  # comment out the build: statement and uncomment the image: statement
-  # image: ghcr.io/firecrawl/firecrawl
+  # NOTE: If you don't want to build the service locally, comment out the
+  # build: statement and change image: to ghcr.io/firecrawl/firecrawl
+  image: firecrawl-api
   build: apps/api
 
+  # The api image is distroless (no shell), so each process runs as its own
+  # service with an exec-form command instead of being launched by harness.js.
+  # The image entrypoint is node, so `command` is just the script path.
+  restart: unless-stopped
+  depends_on: &common-depends-on
+    redis:
+      condition: service_started
+    rabbitmq:
+      condition: service_healthy
+    nuq-postgres:
+      condition: service_started
   ulimits:
     nofile:
       soft: 65535
@@ -14,6 +25,12 @@ x-common-service: &common-service
     - backend
   extra_hosts:
     - "host.docker.internal:host-gateway"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  volumes:
+    - fdb-cluster-file:/var/fdb:ro
   logging:
     driver: "json-file"
     options:
@@ -30,6 +47,13 @@ x-common-env: &common-env
   POSTGRES_DB: ${POSTGRES_DB:-postgres}
   POSTGRES_HOST: ${POSTGRES_HOST:-nuq-postgres}
   POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  # Built from the POSTGRES_* values above. If your password contains URL
+  # special characters (@ : / ? # %), set NUQ_DATABASE_URL yourself with the
+  # password percent-encoded.
+  NUQ_DATABASE_URL: ${NUQ_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-nuq-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}}
+  NUQ_DATABASE_URL_LISTEN: ${NUQ_DATABASE_URL_LISTEN:-${NUQ_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-nuq-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-postgres}}}
+  NUQ_RABBITMQ_URL: ${NUQ_RABBITMQ_URL:-amqp://rabbitmq:5672}
+  ENV: local
   USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
   NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
   CRAWL_CONCURRENT_REQUESTS: ${CRAWL_CONCURRENT_REQUESTS:-10}
@@ -99,28 +123,95 @@ services:
       <<: *common-env
       HOST: "0.0.0.0"
       PORT: ${INTERNAL_PORT:-3002}
-      EXTRACT_WORKER_PORT: ${EXTRACT_WORKER_PORT:-3004}
-      WORKER_PORT: ${WORKER_PORT:-3005}
-      NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
-      HARNESS_STARTUP_TIMEOUT_MS: ${HARNESS_STARTUP_TIMEOUT_MS:-60000}
-      ENV: local
+      NUQ_POD_NAME: api
     depends_on:
-      redis:
-        condition: service_started
+      <<: *common-depends-on
       playwright-service:
         condition: service_started
-      rabbitmq:
-        condition: service_healthy
     ports:
       - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
-    volumes:
-      - fdb-cluster-file:/var/fdb:ro
-    command: node dist/src/harness.js --start-docker
+    command: ["dist/src/index.js"]
     # Resource limits for Docker Compose (not Swarm)
     # Increase if you have more CPU cores/RAM available
-    cpus: 4.0
-    mem_limit: 8G
-    memswap_limit: 8G
+    cpus: 2.0
+    mem_limit: 2G
+    memswap_limit: 2G
+
+  worker:
+    <<: *common-service
+    environment:
+      <<: *common-env
+      NUQ_POD_NAME: worker
+    depends_on:
+      <<: *common-depends-on
+      playwright-service:
+        condition: service_started
+    command: ["dist/src/services/queue-worker.js"]
+    cpus: 2.0
+    mem_limit: 3G
+    memswap_limit: 3G
+
+  extract-worker:
+    <<: *common-service
+    environment:
+      <<: *common-env
+      NUQ_POD_NAME: extract-worker
+    command: ["dist/src/services/extract-worker.js"]
+    cpus: 1.0
+    mem_limit: 1G
+    memswap_limit: 1G
+
+  # Scrape workers. Runs nuq-fdb-worker instead when NUQ_BACKEND=fdb.
+  nuq-worker:
+    <<: *common-service
+    environment:
+      <<: *common-env
+      NUQ_POD_NAME: nuq-worker
+    depends_on:
+      <<: *common-depends-on
+      playwright-service:
+        condition: service_started
+    command: ["dist/src/services/worker/nuq-${NUQ_BACKEND:+fdb-}worker.js"]
+    scale: ${NUQ_WORKER_COUNT:-5}
+    cpus: 1.0
+    mem_limit: 1536M
+    memswap_limit: 1536M
+
+  # The prefetch and reconciler workers are only used by the Postgres queue
+  # backend; they idle harmlessly when NUQ_BACKEND=fdb.
+  nuq-prefetch-worker:
+    <<: *common-service
+    environment:
+      <<: *common-env
+      NUQ_POD_NAME: nuq-prefetch-worker-0
+      NUQ_PREFETCH_REPLICAS: 1
+    command: ["dist/src/services/worker/nuq-prefetch-worker.js"]
+    cpus: 0.5
+    mem_limit: 512M
+    memswap_limit: 512M
+
+  nuq-reconciler:
+    <<: *common-service
+    environment:
+      <<: *common-env
+      NUQ_POD_NAME: nuq-reconciler-worker-0
+    command: ["dist/src/services/worker/nuq-reconciler-worker.js"]
+    cpus: 0.5
+    mem_limit: 512M
+    memswap_limit: 512M
+
+  # Only needed with USE_DB_AUTHENTICATION=true. Enable with
+  # `docker compose --profile db-auth up`.
+  index-worker:
+    <<: *common-service
+    profiles: ["db-auth"]
+    environment:
+      <<: *common-env
+      NUQ_POD_NAME: index-worker
+    command: ["dist/src/services/indexing/index-worker.js"]
+    cpus: 1.0
+    mem_limit: 1G
+    memswap_limit: 1G
 
   redis:
     # NOTE: If you want to use Valkey (open source) instead of Redis (source available),
