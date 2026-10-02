@@ -99,6 +99,8 @@ BULL_AUTH_KEY=CHANGEME
 ## === PostgreSQL Database Configuration ===
 # Configure PostgreSQL credentials. These should match the credentials used by the nuq-postgres container.
 # If you change these, ensure all three are set consistently.
+# If the password contains URL special characters (@ : / ? # %), also set
+# NUQ_DATABASE_URL=postgresql://USER:PERCENT_ENCODED_PASSWORD@nuq-postgres:5432/DB
 # POSTGRES_USER=firecrawl
 # POSTGRES_PASSWORD=firecrawl_password
 # POSTGRES_DB=firecrawl
@@ -127,6 +129,8 @@ BULL_AUTH_KEY=CHANGEME
 - **Use strong PostgreSQL credentials.** The defaults in the `.env` template are for local development only. When deploying to a server, set `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` to secure values and ensure they match the database service configuration.
 - **Keep the database port internal.** The provided `docker-compose.yaml` does not expose PostgreSQL to the host or the internet. Avoid adding a `ports` mapping for `nuq-postgres` unless you are restricting access with a firewall. To access the database for maintenance, prefer using `docker compose exec nuq-postgres psql` or a temporary, firewalled tunnel.
 - **Protect the admin UI.** Set `BULL_AUTH_KEY` to a strong secret, especially on any deployment reachable from untrusted networks.
+- **TLS verification is on by default.** Scrapes of sites with invalid or self-signed certificates fail unless the request sets `"skipTlsVerification": true`.
+- **Private addresses are blocked.** URLs pointing at private, loopback or link-local IPs (including cloud metadata at `169.254.169.254`) are rejected unless `ALLOW_LOCAL_WEBHOOKS=true`.
 
 3.  Build and run the Docker containers:
 
@@ -136,6 +140,8 @@ BULL_AUTH_KEY=CHANGEME
     ```
 
     If you encounter an error, make sure you're using `docker compose` and not `docker-compose`.
+
+    The api image is distroless (no shell), so the API and each worker run as separate services (`api`, `worker`, `extract-worker`, `nuq-worker`, `nuq-prefetch-worker`, `nuq-reconciler`). Set `NUQ_WORKER_COUNT` to change how many `nuq-worker` replicas run (default 5). If you use `USE_DB_AUTHENTICATION=true`, also start the index worker with `docker compose --profile db-auth up`.
     
     This will run a local instance of Firecrawl which can be accessed at `http://localhost:3002`.
     
