@@ -734,12 +734,9 @@ export const applyScrapeOptionsDefaults = <T extends ScrapeOptionsBase>(
   obj: T,
 ): T & { skipTlsVerification: boolean } => ({
   ...obj,
-  skipTlsVerification:
-    obj.skipTlsVerification ??
-    ((obj.headers && Object.keys(obj.headers).length > 0) ||
-    (obj.actions && obj.actions.length > 0)
-      ? false
-      : true),
+  // Security: verify TLS certificates unless the caller explicitly opts out
+  // with `skipTlsVerification: true` for a site it trusts.
+  skipTlsVerification: obj.skipTlsVerification ?? false,
 });
 
 // Base transform function that handles both nullable and non-nullable cases

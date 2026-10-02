@@ -199,8 +199,9 @@ const initializeBrowser = async () => {
       '--disable-gpu',
       // Anti-bot / fingerprint evasion
       '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,SitePerProcess',
-      '--disable-web-security',
+      // Security: do NOT pass --disable-web-security or disable
+      // IsolateOrigins/SitePerProcess. Scraped pages are untrusted; the
+      // same-origin policy and site isolation must stay enabled.
       '--window-size=1280,800',
       '--start-maximized',
     ],
