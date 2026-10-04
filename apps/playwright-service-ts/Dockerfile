@@ -34,7 +34,8 @@ RUN pnpm prune --prod --ignore-scripts
 # distroless base already provides are skipped.
 FROM build AS collect
 RUN set -eu; \
-  HS=$(ls -d "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-linux/headless_shell); \
+  HS=$(find "$PLAYWRIGHT_BROWSERS_PATH" -maxdepth 3 -type f \( -name headless_shell -o -name chrome-headless-shell \) | head -n1); \
+  test -n "$HS" || { echo "headless shell not found" >&2; exit 1; }; \
   nsslibs=$(dpkg -L libnss3 | grep '\.so'); \
   closure=$(ldd "$HS" $nsslibs | awk '/=>/{print $3}' | xargs -r readlink -f | xargs -r dpkg -S 2>/dev/null | cut -d: -f1); \
   fonts=$(dpkg-query -W -f '${Package}\n' | grep -E '^fonts-'); \
