@@ -8,6 +8,10 @@ ENV CI=true
 
 RUN corepack enable && corepack prepare pnpm@11.20.0 --activate
 
+# Debian packages copied into the runtime (the FoundationDB client's closure)
+# come from stages built on this base, so take current trixie security updates.
+RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+
 # Build Go shared library
 FROM golang:1.27-trixie@sha256:433790e515d27dc6003e847e644cc0af956985cf315c1c58a3b73ee2dd305183 AS go-build
 WORKDIR /app
@@ -90,7 +94,7 @@ RUN apt-get update && apt-get install -y curl && \
 # Runtime stage: distroless Node (no shell, package manager or userland tools).
 # Minions runs `node dist/src/index.js`; the harness entrypoint needs Docker and
 # is not supported in this image.
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c AS runtime
 
 EXPOSE 8080
 WORKDIR /app
