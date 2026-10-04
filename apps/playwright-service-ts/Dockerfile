@@ -7,6 +7,11 @@ ENV CI=true
 
 RUN corepack enable && corepack prepare pnpm@11.4.0 --activate
 
+# Debian packages copied into the runtime (Chromium's library closure) come
+# from this stage, so take the current trixie security updates first; the
+# pinned base image alone would freeze them (e.g. pcre2).
+RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /usr/src/app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -47,7 +52,7 @@ RUN set -eu; \
   ls /out/status.d | tr '\n' ' '
 
 # Runtime: distroless Node (no shell, package manager or userland tools).
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c AS runtime
 COPY --from=collect /out/root/ /
 COPY --from=collect /out/status.d/ /var/lib/dpkg/status.d/
 # Distroless's os-release omits VERSION_CODENAME and names itself "Distroless", which
