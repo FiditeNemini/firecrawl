@@ -85,6 +85,7 @@ x-common-env: &common-env
 
 services:
   playwright-service:
+    restart: unless-stopped
     # NOTE: If you don't want to build the service locally,
     # comment out the build: statement and uncomment the image: statement
     # image: ghcr.io/firecrawl/playwright-service:latest
@@ -214,11 +215,9 @@ services:
     memswap_limit: 1G
 
   redis:
-    # NOTE: If you want to use Valkey (open source) instead of Redis (source available),
-    # uncomment the Valkey statement and comment out the Redis statement.
-    # Using Valkey with Firecrawl is untested and not guaranteed to work. Use with caution.
-    image: redis:alpine
-    # image: valkey/valkey:alpine
+    # Built from poslogica/redis (basewarden/7.4), basewarden-redis:local
+    image: basewarden-redis:local
+    restart: unless-stopped
 
     networks:
       - backend
@@ -232,6 +231,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
+    restart: unless-stopped
     networks:
       - backend
     command: rabbitmq-server
@@ -249,10 +249,10 @@ services:
         compress: "true"
 
   nuq-postgres:
-    # NOTE: If you don't want to build the image locally,
-    # comment out the build: statement and uncomment the image: statement
-    # image: ghcr.io/firecrawl/nuq-postgres:latest
+    # Built from poslogica/postgres fork with pg_cron
     build: apps/nuq-postgres
+    image: firecrawl-nuq-postgres:local
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -271,6 +271,7 @@ services:
   # fdb-cluster-file volume. Replaces nuq-postgres once stable.
   foundationdb:
     image: foundationdb/foundationdb:7.3.63
+    restart: unless-stopped
     environment:
       FDB_NETWORKING_MODE: container
       FDB_COORDINATOR_PORT: 4500

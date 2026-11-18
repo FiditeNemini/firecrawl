@@ -29,7 +29,7 @@ RUN pnpm prune --prod --ignore-scripts
 # distroless base already provides are skipped.
 FROM build AS collect
 RUN set -eu; \
-  HS=$(ls -d "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-*/chrome-linux/headless_shell); \
+  HS=$(find "$PLAYWRIGHT_BROWSERS_PATH" -name headless_shell -type f | head -1); \
   nsslibs=$(dpkg -L libnss3 | grep '\.so'); \
   closure=$(ldd "$HS" $nsslibs | awk '/=>/{print $3}' | xargs -r readlink -f | xargs -r dpkg -S 2>/dev/null | cut -d: -f1); \
   fonts=$(dpkg-query -W -f '${Package}\n' | grep -E '^fonts-'); \
@@ -43,6 +43,20 @@ RUN set -eu; \
       if [ -f "$f" ] || [ -L "$f" ]; then mkdir -p "/out/root$(dirname "$f")"; cp -a "$f" "/out/root$f"; fi; \
     done; \
   done; \
+  # Chromium loads many libraries (GLib, ATK, Pango, Cairo, etc.) via dlopen
+  # at runtime, so they don't appear in ldd output. Collect the entire
+  # Debian multiarch library tree to cover these transitive dependencies.
+  if [ -d /usr/lib/x86_64-linux-gnu ]; then \
+    for f in /usr/lib/x86_64-linux-gnu/*.so*; do \
+      [ -f "$f" ] || [ -L "$f" ] || continue; \
+      pkg=$(dpkg -S "$f" 2>/dev/null | cut -d: -f1); \
+      [ -n "$pkg" ] || continue; \
+      case "$skip" in *" $pkg "*) continue;; esac; \
+      dpkg-query -s "$pkg" 2>/dev/null > "/out/status.d/$pkg" 2>/dev/null || true; \
+      mkdir -p "/out/root$(dirname "$f")"; \
+      cp -a "$f" "/out/root$f"; \
+    done; \
+  fi; \
   printf '%s\n' 'PRETTY_NAME="Debian GNU/Linux 13 (trixie) (distroless)"' 'NAME="Debian GNU/Linux"' 'ID=debian' 'VERSION_ID="13"' 'VERSION="13 (trixie)"' 'VERSION_CODENAME=trixie' 'HOME_URL="https://github.com/GoogleContainerTools/distroless"' > /out/os-release; \
   ls /out/status.d | tr '\n' ' '
 
@@ -58,6 +72,9 @@ COPY --from=collect /out/os-release /usr/lib/os-release
 COPY --from=build --chown=65532:65532 /usr/src/app /usr/src/app
 COPY --from=build /usr/local/share/playwright /usr/local/share/playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
+# GLib libraries are in the Debian multiarch path; distroless images
+# have no ld.so.cache so the linker only searches /lib and /usr/lib.
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
 WORKDIR /usr/src/app
 
 ARG PORT
