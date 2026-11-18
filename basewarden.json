@@ -1,0 +1,53 @@
+{
+  "project": "firecrawl",
+  "forkRoot": "..",
+  "minBuildCache": "10GB",
+  "targets": {
+    "compose": {
+      "file": "docker-compose.yaml"
+    }
+  },
+  "uses": {
+    "redis": {
+      "Services": {
+        "compose": ["redis"]
+      }
+    }
+  },
+  "baseArgs": {
+    "PG_BASE": "basewarden-postgres:local"
+  },
+  "images": [
+    {
+      "Dockerfile": "apps/api/Dockerfile",
+      "Tag": "firecrawl-api:local",
+      "Context": "apps/api",
+      "Services": {
+        "compose": [
+          "api",
+          "worker",
+          "extract-worker",
+          "nuq-worker",
+          "nuq-prefetch-worker",
+          "nuq-reconciler"
+        ]
+      }
+    },
+    {
+      "Dockerfile": "apps/playwright-service-ts/Dockerfile",
+      "Tag": "firecrawl-playwright:local",
+      "Context": "apps/playwright-service-ts",
+      "Services": {
+        "compose": ["playwright-service"]
+      }
+    },
+    {
+      "Dockerfile": "apps/nuq-postgres/Dockerfile",
+      "Tag": "firecrawl-nuq-postgres:local",
+      "Context": "apps/nuq-postgres",
+      "Services": {
+        "compose": ["nuq-postgres"]
+      }
+    }
+  ]
+}
